@@ -29,6 +29,7 @@ const DRY_RUN      = args.includes('--dry-run');
 const FETCH_UP     = args.includes('--fetch-upstream');
 const SKIP_README  = args.includes('--skip-readme');
 const SKIP_JS      = args.includes('--skip-js');
+const SYNC_CLAWHUB = args.includes('--sync-clawhub'); // publish current version to ClawHub without patching
 const reposArg     = args.find(a => a.startsWith('--repos='))?.split('=')[1]
                   || (args.includes('--repos') ? args[args.indexOf('--repos') + 1] : null);
 const FILTER_REPOS = reposArg ? reposArg.split(',').map(s => s.trim()) : null;
@@ -312,8 +313,29 @@ for (const skill of skillRepos) {
     }
 
     if (!changed) {
-      log(`  ✓ ${skill.slug} — already up to date`);
-      results.push({ slug: skill.slug, status: 'up-to-date' });
+      if (SYNC_CLAWHUB) {
+        // No file changes but force-publish current version to ClawHub
+        const clawToken = CLAWHUB_TOKENS[skill.account];
+        if (clawToken) {
+          const pkg = existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, 'utf8')) : {};
+          const ver = pkg.version || '1.0.0';
+          try {
+            run(`clawhub auth login --token ${clawToken} --no-browser`);
+        run(`clawhub publish ${patchDir} --version ${ver}`);
+            log(`  ↑ ${skill.slug} — synced to ClawHub v${ver}`);
+            results.push({ slug: skill.slug, status: 'synced', changes: [`clawhub@${ver}`] });
+          } catch (e) {
+            log(`  ⚠ ${skill.slug} — ClawHub sync failed: ${e.message.split('\n')[0]}`);
+            results.push({ slug: skill.slug, status: 'error', error: e.message });
+          }
+        } else {
+          log(`  ⚠ ${skill.slug} — no ClawHub token for ${skill.account}`);
+          results.push({ slug: skill.slug, status: 'up-to-date' });
+        }
+      } else {
+        log(`  · ${skill.slug} — already up to date`);
+        results.push({ slug: skill.slug, status: 'up-to-date' });
+      }
       continue;
     }
 
@@ -341,10 +363,8 @@ for (const skill of skillRepos) {
       const pkg = existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, 'utf8')) : {};
       const ver = pkg.version || '1.0.0';
       try {
-        run(`npx clawhub publish . --version ${ver}`, {
-          env: { ...process.env, CLAWHUB_TOKEN: clawToken },
-          cwd: patchDir,
-        });
+        run(`clawhub auth login --token ${clawToken} --no-browser`);
+        run(`clawhub publish ${patchDir} --version ${ver}`);
         changes.push(`clawhub@${ver}`);
         log(`  ↑ ${skill.slug} — published to ClawHub v${ver}`);
       } catch (e) {
@@ -369,7 +389,7 @@ console.log(`  Neta Patch Summary — ${new Date().toISOString().slice(0,10)}`);
 console.log('════════════════════════════════════════');
 for (const r of results) {
   const published = r.changes?.some(c => c.startsWith('clawhub@'));
-  const icon = r.status === 'patched' ? (published ? '↑' : '✓') : r.status === 'error' ? '✗' : '·';
+  const icon = r.status === 'synced' ? '↑' : r.status === 'patched' ? (published ? '↑' : '✓') : r.status === 'error' ? '✗' : '·';
   console.log(`  ${icon} ${r.slug.padEnd(38)} ${r.status}${r.changes ? ' — ' + r.changes.join(', ') : ''}`);
 }
 console.log('════════════════════════════════════════');
