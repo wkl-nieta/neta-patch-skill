@@ -91,6 +91,14 @@ try {
 
 const GH_ENV = { ...process.env, GH_CONFIG_DIR: `${HOME}/.config/gh-cron` };
 
+// Build a map of github → clawhubToken from config
+const CLAWHUB_TOKENS = {};
+for (const acct of (config.accounts || [])) {
+  if (acct.github && acct.clawhubToken) {
+    CLAWHUB_TOKENS[acct.github] = acct.clawhubToken;
+  }
+}
+
 // ── Patch a JS file ───────────────────────────────────────────────────────────
 function patchJs(src) {
   let out = src;
@@ -327,6 +335,25 @@ for (const skill of skillRepos) {
     run(`git -C ${patchDir} commit -m "chore: neta-skills sync ${new Date().toISOString().slice(0,10)} (${changes.join(', ')})"`);
     run(`git -C ${patchDir} push`);
 
+    // Publish to ClawHub with the new version
+    const clawToken = CLAWHUB_TOKENS[skill.account];
+    if (clawToken) {
+      const pkg = existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, 'utf8')) : {};
+      const ver = pkg.version || '1.0.0';
+      try {
+        run(`npx clawhub publish . --version ${ver}`, {
+          env: { ...process.env, CLAWHUB_TOKEN: clawToken },
+          cwd: patchDir,
+        });
+        changes.push(`clawhub@${ver}`);
+        log(`  ↑ ${skill.slug} — published to ClawHub v${ver}`);
+      } catch (e) {
+        log(`  ⚠ ${skill.slug} — ClawHub publish failed: ${e.message.split('\n')[0]}`);
+      }
+    } else {
+      log(`  ⚠ ${skill.slug} — no ClawHub token for ${skill.account}, skipping publish`);
+    }
+
     log(`  ✓ ${skill.slug} — patched: ${changes.join(', ')}`);
     results.push({ slug: skill.slug, status: 'patched', changes });
 
@@ -341,7 +368,8 @@ console.log('\n═════════════════════�
 console.log(`  Neta Patch Summary — ${new Date().toISOString().slice(0,10)}`);
 console.log('════════════════════════════════════════');
 for (const r of results) {
-  const icon = r.status === 'patched' ? '✓' : r.status === 'error' ? '✗' : '·';
+  const published = r.changes?.some(c => c.startsWith('clawhub@'));
+  const icon = r.status === 'patched' ? (published ? '↑' : '✓') : r.status === 'error' ? '✗' : '·';
   console.log(`  ${icon} ${r.slug.padEnd(38)} ${r.status}${r.changes ? ' — ' + r.changes.join(', ') : ''}`);
 }
 console.log('════════════════════════════════════════');
