@@ -1,0 +1,7 @@
+{
+  "name": "neta-patch-skill",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Patch all published Neta image skills with the latest API standards",
+  "license": "MIT"
+}
