@@ -139,32 +139,62 @@ function patchJs(src) {
 function patchReadme(src, skill) {
   let out = src;
 
-  // 1. Update token setup section
-  const tokenSection = `## Token Setup
+  // 1. Neta onboarding block — what it is, how to register, pricing, token
+  const onboardingSection = `## About Neta
 
-Get your Neta API token from the [Neta Open Portal](${SPEC.tokenUrl}).
+[Neta](https://www.neta.art/) (by TalesofAI) is an AI image and video generation platform with a powerful open API. It uses a **credit-based system (AP — Action Points)** where each image generation costs a small number of credits. Subscriptions are available for heavier usage.
 
-Set it via environment variable:
+### Register
+
+| Region | Sign up | Get token |
+|--------|---------|-----------|
+| Global | [neta.art](https://www.neta.art/) | [Open Portal → API Token](https://www.neta.art/open/) |
+| China  | [nieta.art](https://app.nieta.art/) | [Security Settings](https://app.nieta.art/security) |
+
+New accounts receive free credits to get started.
+
+### Pricing
+
+Neta uses a pay-per-generation credit model. View current plans and credit packages on the [pricing page](https://www.neta.art/pricing).
+
+- Free tier: limited credits on signup
+- Subscription: monthly AP allowance via Stripe
+- One-time packs: top up credits as needed
+
+### Get your API token
+
+1. Sign in at [neta.art/open](https://www.neta.art/open/) (global) or [nieta.art/security](https://app.nieta.art/security) (China)
+2. Generate a new API token
+3. Set it as \`NETA_TOKEN\` in your environment or pass via \`--token\`
+
 \`\`\`bash
 export NETA_TOKEN=your_token_here
-\`\`\`
+node ${skill.scriptName} "your prompt"
 
-Or pass inline:
-\`\`\`bash
+# or inline
 node ${skill.scriptName} "your prompt" --token your_token_here
 \`\`\``;
 
-  if (/## Token Setup/.test(out)) {
-    out = out.replace(/## Token Setup[\s\S]*?(?=\n## |\n---|\s*$)/, tokenSection + '\n\n');
-  } else if (/## Setup|## Getting.*Token|## Authentication/.test(out)) {
-    out = out.replace(/## (Setup|Getting.*Token|Authentication)[\s\S]*?(?=\n## |\n---|\s*$)/, tokenSection + '\n\n');
+  // Replace existing onboarding block if present, otherwise insert before footer / at end
+  if (/## About Neta/.test(out)) {
+    out = out.replace(/## About Neta[\s\S]*?(?=\n## |\n---\s*\n(?!.*##)|\s*$)/, onboardingSection + '\n\n');
+  } else if (/## Token Setup|## Setup|## Getting.*Token|## Authentication/.test(out)) {
+    // Replace old minimal token section with full onboarding block
+    out = out.replace(/## (Token Setup|Setup|Getting.*Token|Authentication)[\s\S]*?(?=\n## |\n---|\s*$)/, onboardingSection + '\n\n');
+  } else {
+    // Insert before footer or append
+    if (/---\n\nBuilt with/.test(out)) {
+      out = out.replace(/---\n\nBuilt with/, onboardingSection + '\n\n---\n\nBuilt with');
+    } else {
+      out = out.trimEnd() + '\n\n' + onboardingSection + '\n';
+    }
   }
 
   // 2. Update any hardcoded .cn API URLs in README
   out = out.replace(/api\.talesofai\.cn/g, 'api.talesofai.com');
 
   // 3. Add/update "Powered by" footer with current links
-  const footer = `---\n\nBuilt with [Claude Code](https://claude.ai/claude-code) · Powered by [Neta](https://www.neta.art/) · [API Docs](${SPEC.tokenUrl})`;
+  const footer = `---\n\nBuilt with [Claude Code](https://claude.ai/claude-code) · Powered by [Neta](https://www.neta.art/) · [Open Portal](${SPEC.tokenUrl})`;
   if (/Built with Claude Code/.test(out)) {
     out = out.replace(/---\s*\nBuilt with Claude Code[\s\S]*$/, footer);
   }
