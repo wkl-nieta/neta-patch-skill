@@ -243,6 +243,45 @@ function patchReadme(src, skill) {
   return out;
 }
 
+// ── Patch SKILL.md ────────────────────────────────────────────────────────────
+function patchSkillMd(src, skill) {
+  let out = src;
+
+  // 1. Remove bogus --style option (never existed in any JS)
+  out = out.replace(/^- `--style`[^\n]*\n?/gm, '');
+
+  // 2. Fix description — strip SEO-stuffed "X ai image generator images" pattern
+  out = out.replace(
+    /^description: Generate .+ images with AI — powered by Neta talesofai API\./m,
+    `description: Generate ${skill.slug.replace(/-skill$/, '').replace(/-/g, ' ')} images using the Neta AI API. Returns a direct image URL.`
+  );
+
+  // 3. Add NETA_TOKEN setup if missing
+  if (!out.includes('NETA_TOKEN')) {
+    const tokenBlock = [
+      '',
+      '## Token',
+      '',
+      'Requires a Neta API token via `NETA_TOKEN` env var or `--token` flag.',
+      '- Global: <https://www.neta.art/open/>',
+      '- China:  <https://app.nieta.art/security>',
+      '',
+      '```bash',
+      'export NETA_TOKEN=your_token_here',
+      '```',
+    ].join('\n');
+
+    // Insert before the Install section, or append
+    if (/^## Install/m.test(out)) {
+      out = out.replace(/^## Install/m, tokenBlock + '\n\n## Install');
+    } else {
+      out = out.trimEnd() + '\n' + tokenBlock + '\n';
+    }
+  }
+
+  return out;
+}
+
 // ── Process each skill ────────────────────────────────────────────────────────
 const results = [];
 const REPORTS_DIR = config.reportsDir || `${HOME}/random/skill-created`;
@@ -285,12 +324,22 @@ for (const skill of skillRepos) {
     run(`gh auth switch --user ${skill.account}`, { env: GH_ENV, allowFail: true });
     run(`git clone --depth 1 ${skill.repo}.git ${patchDir}`);
 
-    const jsPath     = join(patchDir, skill.scriptName);
-    const readmePath = join(patchDir, 'README.md');
-    const pkgPath    = join(patchDir, 'package.json');
+    const jsPath      = join(patchDir, skill.scriptName);
+    const readmePath  = join(patchDir, 'README.md');
+    const skillMdPath = join(patchDir, 'SKILL.md');
+    const pkgPath     = join(patchDir, 'package.json');
 
     let changed = false;
     const changes = [];
+
+    // Remove stale duplicate JS files (any .js that isn't the canonical scriptName)
+    const allJs = readdirSync(patchDir).filter(f => f.endsWith('.js') && f !== skill.scriptName);
+    for (const stale of allJs) {
+      log(`  ⌫ removing stale file: ${stale}`);
+      if (!DRY_RUN) rmSync(join(patchDir, stale));
+      changes.push(`rm:${stale}`);
+      changed = true;
+    }
 
     if (!SKIP_JS && existsSync(jsPath)) {
       const orig    = readFileSync(jsPath, 'utf8');
@@ -308,6 +357,16 @@ for (const skill of skillRepos) {
       if (patched !== orig) {
         changes.push('readme');
         if (!DRY_RUN) writeFileSync(readmePath, patched);
+        changed = true;
+      }
+    }
+
+    if (existsSync(skillMdPath)) {
+      const orig    = readFileSync(skillMdPath, 'utf8');
+      const patched = patchSkillMd(orig, skill);
+      if (patched !== orig) {
+        changes.push('skill.md');
+        if (!DRY_RUN) writeFileSync(skillMdPath, patched);
         changed = true;
       }
     }
@@ -354,8 +413,8 @@ for (const skill of skillRepos) {
     }
 
     run(`git -C ${patchDir} add -A`);
-    run(`git -C ${patchDir} commit -m "chore: neta-skills sync ${new Date().toISOString().slice(0,10)} (${changes.join(', ')})"`);
-    run(`git -C ${patchDir} push`);
+    run(`git -C ${patchDir} -c user.name="${skill.account}" -c user.email="${skill.account}@users.noreply.github.com" commit -m "chore: neta-skills sync ${new Date().toISOString().slice(0,10)} (${changes.join(', ')})"`);
+    run(`git -C ${patchDir} push`, { env: GH_ENV });
 
     // Publish to ClawHub with the new version
     const clawToken = CLAWHUB_TOKENS[skill.account];
