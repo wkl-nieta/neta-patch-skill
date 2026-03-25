@@ -15,9 +15,62 @@
  */
 
 import { execSync, spawnSync } from 'child_process';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync, copyFileSync, openSync, closeSync, unlinkSync, statSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+
+// ── hosts.yml guard (inline — no external dep) ────────────────────────────────
+const _GH_DIR    = `${homedir()}/.config/gh-cron`;
+const _HOSTS     = `${_GH_DIR}/hosts.yml`;
+const _BACKUP    = `${_GH_DIR}/hosts.yml.bak`;
+const _LOCK_FILE = `${_GH_DIR}/hosts.yml.lock`;
+
+function _validateHosts() {
+  if (!existsSync(_HOSTS)) return { valid: false, error: 'not found' };
+  const lines = readFileSync(_HOSTS, 'utf8').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (!l || /^\s/.test(l) || l === 'github.com:') continue;
+    return { valid: false, error: `line ${i+1}: "${l.slice(0,50)}"` };
+  }
+  return { valid: true };
+}
+function _repairIfNeeded() {
+  const { valid, error } = _validateHosts();
+  if (valid) return false;
+  log(`hosts.yml corrupted (${error}) — restoring from backup`);
+  if (!existsSync(_BACKUP)) { log('ERROR: no backup to restore from'); return false; }
+  copyFileSync(_BACKUP, _HOSTS);
+  log('hosts.yml restored ✓');
+  return true;
+}
+function _acquireLock() {
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    try { const fd = openSync(_LOCK_FILE, 'wx'); closeSync(fd); return true; }
+    catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      try { if (Date.now() - statSync(_LOCK_FILE).mtimeMs > 30000) { unlinkSync(_LOCK_FILE); continue; } } catch {}
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+    }
+  }
+  return false;
+}
+function _releaseLock() { try { unlinkSync(_LOCK_FILE); } catch {} }
+function safeAuthSwitch(account, execFn) {
+  _repairIfNeeded();
+  _acquireLock();
+  try { execFn(`gh auth switch --user ${account}`); } finally { _releaseLock(); }
+  const { valid, error } = _validateHosts();
+  if (!valid) {
+    log(`hosts.yml corrupted after switch (${error}) — repairing`);
+    _repairIfNeeded();
+    _acquireLock();
+    try { execFn(`gh auth switch --user ${account}`); } finally { _releaseLock(); }
+  } else {
+    try { copyFileSync(_HOSTS, _BACKUP); } catch {}  // refresh backup
+  }
+}
 
 const HOME = homedir();
 const CONFIG_FILE = `${HOME}/random/scripts/skill-pipeline/config.json`;
@@ -63,6 +116,9 @@ const SPEC = {
   pendingStates:  ['PENDING', 'MODERATION'],
   terminalStates: ['SUCCESS', 'FAILURE', 'TIMEOUT', 'DELETED', 'ILLEGAL_IMAGE'],
 };
+
+// ── Validate hosts.yml on startup ─────────────────────────────────────────────
+_repairIfNeeded();
 
 // ── Optionally fetch upstream spec ────────────────────────────────────────────
 if (FETCH_UP) {
@@ -321,7 +377,7 @@ for (const skill of skillRepos) {
     if (existsSync(patchDir)) rmSync(patchDir, { recursive: true });
     mkdirSync(patchDir, { recursive: true });
 
-    run(`gh auth switch --user ${skill.account}`, { env: GH_ENV, allowFail: true });
+    safeAuthSwitch(skill.account, cmd => run(cmd, { env: GH_ENV, allowFail: true }));
     run(`git clone --depth 1 ${skill.repo}.git ${patchDir}`);
 
     const jsPath      = join(patchDir, skill.scriptName);
