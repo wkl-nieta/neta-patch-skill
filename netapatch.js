@@ -48,14 +48,13 @@ function log(msg) { console.log(`[patch] ${msg}`); }
 // ── Embedded API spec (current as of 2026-03-24) ──────────────────────────────
 // Source: https://github.com/talesofai/neta-skills
 //
-// NOTE on base URLs:
-//   .cn  — works with ALL token types (nieta.art login + Open Platform tokens)
-//   .com — only works with Open Platform tokens from neta.art/open
-//   We keep .cn as default for broadest compatibility.
-//   Users can override via NETA_API_URL env var.
+// NOTE on base URLs (updated 2026-03-25 — upstream now defaults to .com):
+//   .com — official default (Open Platform tokens); used by talesofai/neta-skills
+//   .cn  — China region (nieta.art login tokens); override via NETA_API_BASE_URL=https://api.talesofai.cn
+//   Env var: NETA_API_BASE_URL (official), NETA_API_URL (legacy compat)
 const SPEC = {
-  baseUrlCN:      'https://api.talesofai.cn',
   baseUrlCOM:     'https://api.talesofai.com',
+  baseUrlCN:      'https://api.talesofai.cn',
   entrance:       'PICTURE,CLI',
   defaultModel:   '8_image_edit',
   tokenUrlGlobal: 'https://www.neta.art/open/',
@@ -104,23 +103,24 @@ for (const acct of (config.accounts || [])) {
 function patchJs(src) {
   let out = src;
 
-  // 1. Revert .com → .cn (or keep .cn). .com only works with Open Platform tokens.
-  out = out.replace(/https:\/\/api\.talesofai\.com/g, SPEC.baseUrlCN);
+  // 1. Normalize to .com default (official upstream standard as of 2026-03-25).
+  out = out.replace(/https:\/\/api\.talesofai\.cn/g, SPEC.baseUrlCOM);
 
-  // 2. Add NETA_API_URL env override support for inline fetch URLs
-  if (!out.includes('NETA_API_URL')) {
+  // 2. Add NETA_API_BASE_URL env override support for inline fetch URLs
+  const ENV_EXPR = `process.env.NETA_API_BASE_URL || process.env.NETA_API_URL || '${SPEC.baseUrlCOM}'`;
+  if (!out.includes('NETA_API_BASE_URL')) {
     out = out.replace(
-      new RegExp(`"${SPEC.baseUrlCN}/v3/make_image"`, 'g'),
-      '`${process.env.NETA_API_URL || \'' + SPEC.baseUrlCN + '\'}/v3/make_image`'
+      new RegExp(`"${SPEC.baseUrlCOM}/v3/make_image"`, 'g'),
+      '`${' + ENV_EXPR + '}/v3/make_image`'
     );
     out = out.replace(
-      new RegExp('`' + SPEC.baseUrlCN.replace(/\./g, '\\.') + '/v1/artifact/task/', 'g'),
-      '`${process.env.NETA_API_URL || \'' + SPEC.baseUrlCN + '\'}/v1/artifact/task/'
+      new RegExp('`' + SPEC.baseUrlCOM.replace(/\./g, '\\.') + '/v1/artifact/task/', 'g'),
+      '`${' + ENV_EXPR + '}/v1/artifact/task/'
     );
     // Single-quote variant
     out = out.replace(
-      new RegExp(`'${SPEC.baseUrlCN}/v3/make_image'`, 'g'),
-      '`${process.env.NETA_API_URL || \'' + SPEC.baseUrlCN + '\'}/v3/make_image`'
+      new RegExp(`'${SPEC.baseUrlCOM}/v3/make_image'`, 'g'),
+      '`${' + ENV_EXPR + '}/v3/make_image`'
     );
   }
 
@@ -214,8 +214,8 @@ function patchReadme(src, skill) {
     `node ${skill.scriptName} "your prompt" --token your_token_here`,
     '```',
     '',
-    '> **API endpoint:** defaults to `api.talesofai.cn` (works with all token types).  ',
-    '> Override with `NETA_API_URL=https://api.talesofai.com` if using a global Open Platform token.',
+    '> **API endpoint:** defaults to `api.talesofai.com` (Open Platform tokens).  ',
+    '> China users: set `NETA_API_BASE_URL=https://api.talesofai.cn` to use the China endpoint.',
   ].join('\n');
 
   // Replace existing onboarding block or old token section
@@ -231,8 +231,8 @@ function patchReadme(src, skill) {
     }
   }
 
-  // Fix any .cn → .com mistakes in README text
-  out = out.replace(/api\.talesofai\.com(?!\/pricing)/g, 'api.talesofai.cn');
+  // Fix any stale .cn references in README text (now .com is canonical)
+  out = out.replace(/api\.talesofai\.cn/g, 'api.talesofai.com');
 
   // Update footer
   const footer = `---\n\nBuilt with [Claude Code](https://claude.ai/claude-code) · Powered by [Neta](https://www.neta.art/) · [Open Portal](${SPEC.tokenUrlGlobal})`;
