@@ -414,7 +414,10 @@ for (const skill of skillRepos) {
 
     run(`git -C ${patchDir} add -A`);
     run(`git -C ${patchDir} -c user.name="${skill.account}" -c user.email="${skill.account}@users.noreply.github.com" commit -m "chore: neta-skills sync ${new Date().toISOString().slice(0,10)} (${changes.join(', ')})"`);
-    run(`git -C ${patchDir} push`, { env: GH_ENV });
+    // Use token directly in push URL to bypass credential helper (which ignores GH_CONFIG_DIR)
+    const ghToken = run(`gh auth token --user ${skill.account}`, { env: GH_ENV });
+    const repoPath = skill.repo.replace('https://github.com/', '');
+    run(`git -C ${patchDir} push https://${skill.account}:${ghToken}@github.com/${repoPath}.git`);
 
     // Publish to ClawHub with the new version
     const clawToken = CLAWHUB_TOKENS[skill.account];
